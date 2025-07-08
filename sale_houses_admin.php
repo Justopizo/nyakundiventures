@@ -11,23 +11,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $price = floatval($_POST['price']);
                 $location = trim($_POST['location']);
                 $description = trim($_POST['description']);
-                $images = trim($_POST['images']);
                 
                 if (empty($title) || empty($price) || empty($location)) {
                     $error = 'Please fill in all required fields';
                 } else {
-                    $stmt = $pdo->prepare("INSERT INTO sale_houses (title, price, location, description, images) VALUES (?, ?, ?, ?, ?)");
-                    if ($stmt->execute([$title, $price, $location, $description, $images])) {
-                        $message = 'House for sale added successfully!';
-                    } else {
-                        $error = 'Failed to add house for sale';
+                    // Handle image upload
+                    $imagePath = null;
+                    if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
+                        $uploadDir = 'uploads/rental_houses/';
+                        if (!file_exists($uploadDir)) {
+                            mkdir($uploadDir, 0777, true);
+                        }
+                        
+                        $fileExtension = pathinfo($_FILES['image']['name'], PATHINFO_EXTENSION);
+                        $fileName = uniqid() . '.' . $fileExtension;
+                        $destination = $uploadDir . $fileName;
+                        
+                        // Check if image file is actual image
+                        $check = getimagesize($_FILES['image']['tmp_name']);
+                        if ($check !== false) {
+                            if (move_uploaded_file($_FILES['image']['tmp_name'], $destination)) {
+                                $imagePath = $destination;
+                            } else {
+                                $error = 'Failed to upload image';
+                            }
+                        } else {
+                            $error = 'File is not an image';
+                        }
+                    }
+                    
+                    if (empty($error)) {
+                        $stmt = $pdo->prepare("INSERT INTO rental_houses (title, price, location, description, images) VALUES (?, ?, ?, ?, ?)");
+                        if ($stmt->execute([$title, $price, $location, $description, $imagePath])) {
+                            $message = 'Rental house added successfully!';
+                        } else {
+                            $error = 'Failed to add rental house';
+                        }
                     }
                 }
                 break;
                 
             case 'delete':
                 $id = intval($_POST['id']);
-                $stmt = $pdo->prepare("DELETE FROM sale_houses WHERE id = ?");
+                // First get image path to delete the file
+                $stmt = $pdo->prepare("SELECT images FROM rental_houses WHERE id = ?");
+                $stmt->execute([$id]);
+                $house = $stmt->fetch();
+                
+                if ($house['images'] && file_exists($house['images'])) {
+                    unlink($house['images']);
+                }
+                
+                $stmt = $pdo->prepare("DELETE FROM rental_houses WHERE id = ?");
                 if ($stmt->execute([$id])) {
                     $message = 'House deleted successfully!';
                 } else {
@@ -38,7 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'update_status':
                 $id = intval($_POST['id']);
                 $status = $_POST['status'];
-                $stmt = $pdo->prepare("UPDATE sale_houses SET status = ? WHERE id = ?");
+                $stmt = $pdo->prepare("UPDATE rental_houses SET status = ? WHERE id = ?");
                 if ($stmt->execute([$status, $id])) {
                     $message = 'Status updated successfully!';
                 } else {
@@ -49,12 +84,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Get all houses for sale
-$stmt = $pdo->query("SELECT * FROM sale_houses ORDER BY created_at DESC");
-$sale_houses = $stmt->fetchAll();
+// Get all rental houses
+$stmt = $pdo->query("SELECT * FROM rental_houses ORDER BY created_at DESC");
+$rental_houses = $stmt->fetchAll();
 ?>
 
-<h1 class="page-title"><i class="fas fa-building"></i> Houses for Sale Management</h1>
+<h1 class="page-title"><i class="fas fa-building"></i> Rental Houses Management</h1>
 
 <?php if ($message): ?>
     <div class="alert alert-success"><?php echo htmlspecialchars($message); ?></div>
@@ -65,8 +100,8 @@ $sale_houses = $stmt->fetchAll();
 <?php endif; ?>
 
 <div class="card">
-    <h2><i class="fas fa-plus"></i> Add New House for Sale</h2>
-    <form method="POST">
+    <h2><i class="fas fa-plus"></i> Add New Rental House</h2>
+    <form method="POST" enctype="multipart/form-data">
         <input type="hidden" name="action" value="add">
         <div class="form-row">
             <div class="form-group">
@@ -74,8 +109,8 @@ $sale_houses = $stmt->fetchAll();
                 <input type="text" id="title" name="title" placeholder="e.g., 4 Bedroom House in Karen" required>
             </div>
             <div class="form-group">
-                <label for="price">Selling Price (KSH) *</label>
-                <input type="number" id="price" name="price" placeholder="e.g., 15000000" step="0.01" required>
+                <label for="price">Monthly Rent (KSH) *</label>
+                <input type="number" id="price" name="price" placeholder="e.g., 50000" step="0.01" required>
             </div>
         </div>
         <div class="form-group">
@@ -87,20 +122,20 @@ $sale_houses = $stmt->fetchAll();
             <textarea id="description" name="description" placeholder="Describe the house features, bedrooms, bathrooms, compound, etc."></textarea>
         </div>
         <div class="form-group">
-            <label for="images">Image URLs (comma-separated)</label>
-            <textarea id="images" name="images" placeholder="https://example.com/image1.jpg, https://example.com/image2.jpg"></textarea>
+            <label for="image">House Image</label>
+            <input type="file" id="image" name="image" accept="image/*">
         </div>
-        <button type="submit" class="btn"><i class="fas fa-plus"></i> Add House for Sale</button>
+        <button type="submit" class="btn"><i class="fas fa-plus"></i> Add Rental House</button>
     </form>
 </div>
 
 <div class="card">
-    <h2><i class="fas fa-list"></i> All Houses for Sale</h2>
-    <?php if (empty($sale_houses)): ?>
-        <p>No houses for sale added yet.</p>
+    <h2><i class="fas fa-list"></i> All Rental Houses</h2>
+    <?php if (empty($rental_houses)): ?>
+        <p>No rental houses added yet.</p>
     <?php else: ?>
         <div class="properties-grid">
-            <?php foreach ($sale_houses as $house): ?>
+            <?php foreach ($rental_houses as $house): ?>
                 <div class="property-card">
                     <div class="property-header">
                         <h3><?php echo htmlspecialchars($house['title']); ?></h3>
@@ -108,8 +143,13 @@ $sale_houses = $stmt->fetchAll();
                             <?php echo ucfirst($house['status']); ?>
                         </span>
                     </div>
+                    <?php if ($house['images']): ?>
+                        <div class="property-image">
+                            <img src="<?php echo htmlspecialchars($house['images']); ?>" alt="<?php echo htmlspecialchars($house['title']); ?>" style="max-width: 100%; height: auto; border-radius: 4px; margin-bottom: 10px;">
+                        </div>
+                    <?php endif; ?>
                     <div class="property-details">
-                        <p><i class="fas fa-money-bill"></i> KSH <?php echo number_format($house['price']); ?></p>
+                        <p><i class="fas fa-money-bill"></i> KSH <?php echo number_format($house['price']); ?>/month</p>
                         <p><i class="fas fa-map-marker-alt"></i> <?php echo htmlspecialchars($house['location']); ?></p>
                         <?php if ($house['description']): ?>
                             <p><i class="fas fa-info-circle"></i> <?php echo htmlspecialchars(substr($house['description'], 0, 100)); ?>...</p>
@@ -122,7 +162,7 @@ $sale_houses = $stmt->fetchAll();
                             <input type="hidden" name="id" value="<?php echo $house['id']; ?>">
                             <select name="status" onchange="this.form.submit()">
                                 <option value="available" <?php echo $house['status'] === 'available' ? 'selected' : ''; ?>>Available</option>
-                                <option value="sold" <?php echo $house['status'] === 'sold' ? 'selected' : ''; ?>>Sold</option>
+                                <option value="rented" <?php echo $house['status'] === 'rented' ? 'selected' : ''; ?>>Rented</option>
                             </select>
                         </form>
                         <form method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this property?')">
@@ -201,7 +241,7 @@ $sale_houses = $stmt->fetchAll();
     color: #155724;
 }
 
-.status-sold {
+.status-rented {
     background-color: #f8d7da;
     color: #721c24;
 }

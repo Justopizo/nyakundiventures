@@ -517,20 +517,69 @@ function closeRentModal() {
 }
 
 function viewDetails(houseId) {
-    // In a real application, you would fetch property details via AJAX
+    // Show loading message
     document.getElementById('detailsModal').style.display = 'block';
-    document.getElementById('propertyDetails').innerHTML = '<p>Loading property details...</p>';
+    document.getElementById('propertyDetails').innerHTML = '<div style="padding: 20px; text-align: center;"><i class="fas fa-spinner fa-spin" style="font-size: 24px;"></i><p>Loading property details...</p></div>';
     
-    // Simulate loading details
-    setTimeout(() => {
-        document.getElementById('propertyDetails').innerHTML = `
-            <div style="padding: 20px;">
-                <h3>Property Details</h3>
-                <p>Detailed information about the property would be displayed here.</p>
-                <p>This would include high-resolution images, floor plans, amenities, and more.</p>
-            </div>
-        `;
-    }, 500);
+    // Fetch property details via AJAX
+    fetch('get_property_details.php?house_id=' + houseId)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const house = data.house;
+                let imagesHtml = '';
+                
+                if (house.images) {
+                    const imageList = house.images.split(',');
+                    imagesHtml = '<div class="property-gallery">';
+                    imageList.forEach(img => {
+                        imagesHtml += `<img src="${img.trim()}" alt="Property Image" style="max-width: 100%; margin-bottom: 10px;" onerror="this.src='/placeholder.svg?height=300&width=450'">`;
+                    });
+                    imagesHtml += '</div>';
+                }
+                
+                document.getElementById('propertyDetails').innerHTML = `
+                    <div style="padding: 20px;">
+                        <h3>${house.title}</h3>
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+                            <p style="font-size: 1.2rem; color: #28a745; font-weight: bold;">
+                                <i class="fas fa-money-bill"></i> KSH ${parseInt(house.price).toLocaleString()}/month
+                            </p>
+                            <p style="font-size: 1.1rem;">
+                                <i class="fas fa-map-marker-alt"></i> ${house.location}
+                            </p>
+                        </div>
+                        
+                        ${imagesHtml}
+                        
+                        <div style="margin-top: 20px;">
+                            <h4>Description</h4>
+                            <p>${house.description || 'No description provided.'}</p>
+                        </div>
+                        
+                        <div style="margin-top: 30px; text-align: center;">
+                            <button class="btn btn-primary" onclick="openRentModal(${house.id}, '${house.title.replace(/'/g, "\\'")}', ${house.price})">
+                                <i class="fas fa-key"></i> Rent This Property
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } else {
+                document.getElementById('propertyDetails').innerHTML = `
+                    <div style="padding: 20px; color: #721c24;">
+                        <p>Error loading property details. Please try again.</p>
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            document.getElementById('propertyDetails').innerHTML = `
+                <div style="padding: 20px; color: #721c24;">
+                    <p>Failed to load property details. Please check your connection and try again.</p>
+                </div>
+            `;
+            console.error('Error:', error);
+        });
 }
 
 function closeDetailsModal() {

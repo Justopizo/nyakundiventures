@@ -555,18 +555,33 @@ while ($row = $stmt->fetch()) {
 <script>
 function viewOrderDetails(orderId) {
     document.getElementById('orderDetailsModal').style.display = 'block';
-    document.getElementById('orderDetailsContent').innerHTML = '<div style="padding: 20px; text-align: center;"><i class="fas fa-spinner fa-spin"></i> Loading order details...</div>';
+    document.getElementById('orderDetailsContent').innerHTML = `
+        <div style="padding: 40px; text-align: center;">
+            <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: #667eea;"></i>
+            <p style="margin-top: 15px;">Loading order details...</p>
+        </div>
+    `;
     
-    // In a real application, you would fetch order details via AJAX
-    setTimeout(() => {
-        document.getElementById('orderDetailsContent').innerHTML = `
-            <div style="padding: 20px;">
-                <h3>Order #${orderId} Details</h3>
-                <p>Detailed order information would be displayed here.</p>
-                <p>This could include timeline, communication history, documents, etc.</p>
-            </div>
-        `;
-    }, 1000);
+    // Make AJAX request to fetch order details
+    fetch(`get_order_details.php?order_id=${orderId}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.text();
+        })
+        .then(data => {
+            document.getElementById('orderDetailsContent').innerHTML = data;
+        })
+        .catch(error => {
+            document.getElementById('orderDetailsContent').innerHTML = `
+                <div class="error-message" style="padding: 20px;">
+                    <h3><i class="fas fa-exclamation-triangle"></i> Error</h3>
+                    <p>Failed to load order details. Please try again.</p>
+                    <p>${error.message}</p>
+                </div>
+            `;
+        });
 }
 
 function closeOrderDetailsModal() {
