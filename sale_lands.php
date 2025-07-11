@@ -26,54 +26,81 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
 // Check if we're viewing a single land detail
 $land_detail = null;
+$view_id = null;
 if (isset($_GET['view']) && is_numeric($_GET['view'])) {
-    $land_id = intval($_GET['view']);
-    $stmt = $pdo->prepare("SELECT * FROM sale_lands WHERE id = ?");
-    $stmt->execute([$land_id]);
+    $view_id = intval($_GET['view']);
+    $stmt = $pdo->prepare("SELECT * FROM sale_lands WHERE id = ? AND status = 'available'");
+    $stmt->execute([$view_id]);
     $land_detail = $stmt->fetch();
 }
 
-// Get search parameters (only if not viewing details)
-if (!$land_detail) {
-    $search = isset($_GET['search']) ? trim($_GET['search']) : '';
-    $location_filter = isset($_GET['location']) ? trim($_GET['location']) : '';
-    $max_price = isset($_GET['max_price']) ? intval($_GET['max_price']) : 0;
-    $size_filter = isset($_GET['size']) ? trim($_GET['size']) : '';
+// Get search parameters (preserve them for back navigation)
+$search = isset($_GET['search']) ? trim($_GET['search']) : '';
+$location_filter = isset($_GET['location']) ? trim($_GET['location']) : '';
+$max_price = isset($_GET['max_price']) ? intval($_GET['max_price']) : 0;
+$size_filter = isset($_GET['size']) ? trim($_GET['size']) : '';
 
-    // Build query
+// Build back URL with preserved search parameters
+$back_params = [];
+if (!empty($search)) $back_params['search'] = $search;
+if (!empty($location_filter)) $back_params['location'] = $location_filter;
+if ($max_price > 0) $back_params['max_price'] = $max_price;
+if (!empty($size_filter)) $back_params['size'] = $size_filter;
+$back_url = '?' . http_build_query($back_params);
+
+// Get listings only if not viewing details
+if (!$land_detail) {
+    // Build query for listings
     $where_conditions = ["status = 'available'"];
     $params = [];
-
+    
     if (!empty($search)) {
         $where_conditions[] = "(title LIKE ? OR description LIKE ?)";
         $params[] = "%$search%";
         $params[] = "%$search%";
     }
-
+    
     if (!empty($location_filter)) {
         $where_conditions[] = "location LIKE ?";
         $params[] = "%$location_filter%";
     }
-
+    
     if ($max_price > 0) {
         $where_conditions[] = "price <= ?";
         $params[] = $max_price;
     }
-
+    
     if (!empty($size_filter)) {
         $where_conditions[] = "size LIKE ?";
         $params[] = "%$size_filter%";
     }
-
+    
     $where_clause = 'WHERE ' . implode(' AND ', $where_conditions);
-
     $stmt = $pdo->prepare("SELECT * FROM sale_lands $where_clause ORDER BY created_at DESC");
     $stmt->execute($params);
     $sale_lands = $stmt->fetchAll();
-
+    
     // Get unique locations for filter
     $stmt = $pdo->query("SELECT DISTINCT location FROM sale_lands WHERE status = 'available' ORDER BY location");
     $locations = $stmt->fetchAll();
+}
+
+// Function to build view URL with preserved search parameters
+function buildViewUrl($land_id, $search_params) {
+    $params = $search_params;
+    $params['view'] = $land_id;
+    return '?' . http_build_query($params);
+}
+
+// Function to get optimized image URL
+function getOptimizedImageUrl($image_path, $width = 800, $height = 600) {
+    // If it's already a placeholder, return as is
+    if (strpos($image_path, 'placeholder.svg') !== false) {
+        return $image_path;
+    }
+    
+    // For real images, return a placeholder first then load the actual image
+    return '/placeholder.svg?height='.$height.'&width='.$width;
 }
 ?>
 
@@ -90,31 +117,36 @@ if (!$land_detail) {
 <?php if ($land_detail): ?>
     <!-- Land Detail View -->
     <div class="land-detail-container">
-        <button class="btn btn-back" onclick="window.history.back()">
+        <button class="btn btn-back" onclick="goBackToListings()">
             <i class="fas fa-arrow-left"></i> Back to Listings
         </button>
         
         <div class="land-detail">
             <div class="land-gallery">
                 <?php if ($land_detail['images']): ?>
-                    <?php $images = explode(',', $land_detail['images']); ?>
+                    <?php $images = array_filter(array_map('trim', explode(',', $land_detail['images']))); ?>
                     <div class="main-image">
-                        <img src="<?php echo trim($images[0]); ?>" alt="<?php echo htmlspecialchars($land_detail['title']); ?>" 
-                             onerror="this.src='/placeholder.svg?height=400&width=600'">
+                        <img id="mainImage" 
+                             src="<?php echo getOptimizedImageUrl($images[0], 800, 600); ?>" 
+                             alt="<?php echo htmlspecialchars($land_detail['title']); ?>"
+                             data-src="<?php echo htmlspecialchars($images[0]); ?>"
+                             onerror="this.src='/placeholder.svg?height=600&width=800'">
                     </div>
                     <?php if (count($images) > 1): ?>
                         <div class="thumbnail-container">
                             <?php foreach ($images as $index => $image): ?>
-                                <div class="thumbnail">
-                                    <img src="<?php echo trim($image); ?>" alt="Thumbnail <?php echo $index + 1; ?>"
-                                         onerror="this.src='/placeholder.svg?height=100&width=150'">
+                                <div class="thumbnail" onclick="changeMainImage('<?php echo htmlspecialchars($image); ?>')">
+                                    <img src="<?php echo getOptimizedImageUrl($image, 200, 150); ?>" 
+                                         alt="Thumbnail <?php echo $index + 1; ?>"
+                                         data-src="<?php echo htmlspecialchars($image); ?>"
+                                         onerror="this.src='/placeholder.svg?height=150&width=200'">
                                 </div>
                             <?php endforeach; ?>
                         </div>
                     <?php endif; ?>
                 <?php else: ?>
                     <div class="main-image">
-                        <img src="/placeholder.svg?height=400&width=600" alt="No image available">
+                        <img src="/placeholder.svg?height=600&width=800" alt="No image available">
                     </div>
                 <?php endif; ?>
             </div>
@@ -141,6 +173,10 @@ if (!$land_detail) {
                         <i class="fas fa-layer-group"></i>
                         <span>Reference: #<?php echo htmlspecialchars($land_detail['id']); ?></span>
                     </div>
+                    <div class="meta-item">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Listed: <?php echo date('M d, Y', strtotime($land_detail['created_at'])); ?></span>
+                    </div>
                 </div>
                 
                 <div class="description">
@@ -152,27 +188,31 @@ if (!$land_detail) {
                     <h3>Features</h3>
                     <ul>
                         <?php if ($land_detail['features']): ?>
-                            <?php $features = explode(',', $land_detail['features']); ?>
+                            <?php $features = array_filter(array_map('trim', explode(',', $land_detail['features']))); ?>
                             <?php foreach ($features as $feature): ?>
-                                <li><i class="fas fa-check-circle"></i> <?php echo htmlspecialchars(trim($feature)); ?></li>
+                                <li><i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($feature); ?></li>
                             <?php endforeach; ?>
                         <?php else: ?>
-                            <li>No specific features listed</li>
+                            <li><i class="fas fa-info-circle"></i> No specific features listed</li>
                         <?php endif; ?>
                     </ul>
                 </div>
                 
                 <div class="land-actions">
-                    <button class="btn btn-primary" onclick="openBuyLandModal(<?php echo $land_detail['id']; ?>, '<?php echo htmlspecialchars($land_detail['title']); ?>', <?php echo $land_detail['price']; ?>, '<?php echo htmlspecialchars($land_detail['size']); ?>')">
+                    <button class="btn btn-primary" onclick="openBuyLandModal(<?php echo $land_detail['id']; ?>, '<?php echo htmlspecialchars($land_detail['title'], ENT_QUOTES); ?>', <?php echo $land_detail['price']; ?>, '<?php echo htmlspecialchars($land_detail['size'], ENT_QUOTES); ?>')">
                         <i class="fas fa-shopping-cart"></i> Buy Now
                     </button>
                     <a href="tel:0742907335" class="btn btn-call">
                         <i class="fas fa-phone"></i> Call Seller
                     </a>
+                    <button class="btn btn-secondary" onclick="shareProperty()">
+                        <i class="fas fa-share-alt"></i> Share
+                    </button>
                 </div>
             </div>
         </div>
     </div>
+
 <?php else: ?>
     <!-- Land Listing View -->
     <div class="search-filters">
@@ -199,6 +239,9 @@ if (!$land_detail) {
                 </div>
                 <div class="form-group">
                     <button type="submit" class="btn-search"><i class="fas fa-search"></i> Search</button>
+                    <?php if (!empty($search) || !empty($location_filter) || $max_price > 0 || !empty($size_filter)): ?>
+                        <a href="?" class="btn-clear"><i class="fas fa-times"></i> Clear</a>
+                    <?php endif; ?>
                 </div>
             </div>
         </form>
@@ -210,15 +253,33 @@ if (!$land_detail) {
                 <i class="fas fa-map"></i>
                 <h3>No land for sale found</h3>
                 <p>Try adjusting your search criteria or check back later for new listings.</p>
+                <?php if (!empty($search) || !empty($location_filter) || $max_price > 0 || !empty($size_filter)): ?>
+                    <a href="?" class="btn btn-primary">View All Listings</a>
+                <?php endif; ?>
             </div>
         <?php else: ?>
+            <div class="results-info">
+                <p>Found <?php echo count($sale_lands); ?> land<?php echo count($sale_lands) !== 1 ? 's' : ''; ?> for sale</p>
+            </div>
             <div class="properties-grid">
                 <?php foreach ($sale_lands as $land): ?>
                     <div class="property-card">
                         <?php if ($land['images']): ?>
-                            <?php $images = explode(',', $land['images']); ?>
+                            <?php $images = array_filter(array_map('trim', explode(',', $land['images']))); ?>
                             <div class="property-image">
-                                <img src="<?php echo trim($images[0]); ?>" alt="<?php echo htmlspecialchars($land['title']); ?>" onerror="this.src='/placeholder.svg?height=200&width=300'">
+                                <img src="<?php echo getOptimizedImageUrl($images[0], 400, 300); ?>" 
+                                     alt="<?php echo htmlspecialchars($land['title']); ?>" 
+                                     data-src="<?php echo htmlspecialchars($images[0]); ?>"
+                                     onerror="this.src='/placeholder.svg?height=300&width=400'">
+                                <?php if (count($images) > 1): ?>
+                                    <div class="image-count">
+                                        <i class="fas fa-images"></i> <?php echo count($images); ?>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                        <?php else: ?>
+                            <div class="property-image">
+                                <img src="/placeholder.svg?height=300&width=400" alt="No image available">
                             </div>
                         <?php endif; ?>
                         
@@ -233,14 +294,14 @@ if (!$land_detail) {
                                 <?php endif; ?>
                             </div>
                             <div class="property-actions">
-                                <button class="btn btn-primary" onclick="openBuyLandModal(<?php echo $land['id']; ?>, '<?php echo htmlspecialchars($land['title']); ?>', <?php echo $land['price']; ?>, '<?php echo htmlspecialchars($land['size']); ?>')">
+                                <button class="btn btn-primary" onclick="openBuyLandModal(<?php echo $land['id']; ?>, '<?php echo htmlspecialchars($land['title'], ENT_QUOTES); ?>', <?php echo $land['price']; ?>, '<?php echo htmlspecialchars($land['size'], ENT_QUOTES); ?>')">
                                     <i class="fas fa-shopping-cart"></i> Buy Now
                                 </button>
-                                <a href="?view=<?php echo $land['id']; ?>" class="btn btn-secondary">
+                                <a href="<?php echo buildViewUrl($land['id'], compact('search', 'location_filter', 'max_price', 'size_filter')); ?>" class="btn btn-secondary">
                                     <i class="fas fa-eye"></i> View Details
                                 </a>
                                 <a href="tel:0742907335" class="btn btn-call">
-                                    <i class="fas fa-phone"></i> Call Seller
+                                    <i class="fas fa-phone"></i> Call
                                 </a>
                             </div>
                         </div>
@@ -340,18 +401,41 @@ if (!$land_detail) {
     font-size: 1rem;
 }
 
-.btn-search {
+.btn-search, .btn-clear {
     padding: 12px 20px;
-    background: #667eea;
-    color: white;
     border: none;
     border-radius: 6px;
     cursor: pointer;
     font-size: 1rem;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-right: 10px;
+}
+
+.btn-search {
+    background: #667eea;
+    color: white;
 }
 
 .btn-search:hover {
     background: #5a6fd8;
+}
+
+.btn-clear {
+    background: #dc3545;
+    color: white;
+}
+
+.btn-clear:hover {
+    background: #c82333;
+}
+
+.results-info {
+    margin-bottom: 20px;
+    color: #666;
+    font-size: 0.9rem;
 }
 
 .properties-grid {
@@ -376,12 +460,29 @@ if (!$land_detail) {
 .property-image {
     height: 200px;
     overflow: hidden;
+    position: relative;
 }
 
 .property-image img {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    transition: transform 0.3s;
+}
+
+.property-card:hover .property-image img {
+    transform: scale(1.05);
+}
+
+.image-count {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(0,0,0,0.7);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 15px;
+    font-size: 0.8rem;
 }
 
 .property-content {
@@ -436,6 +537,7 @@ if (!$land_detail) {
     flex: 1;
     justify-content: center;
     min-width: 80px;
+    transition: all 0.2s;
 }
 
 .btn-primary {
@@ -628,12 +730,18 @@ if (!$land_detail) {
     height: 400px;
     overflow: hidden;
     border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
 }
 
 .main-image img {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    transition: transform 0.3s;
+}
+
+.main-image:hover img {
+    transform: scale(1.02);
 }
 
 .thumbnail-container {
@@ -648,10 +756,12 @@ if (!$land_detail) {
     border-radius: 6px;
     cursor: pointer;
     transition: transform 0.2s;
+    border: 2px solid transparent;
 }
 
 .thumbnail:hover {
     transform: scale(1.05);
+    border-color: #667eea;
 }
 
 .thumbnail img {
@@ -765,10 +875,22 @@ if (!$land_detail) {
     .land-actions {
         flex-direction: column;
     }
+    
+    .meta-info {
+        grid-template-columns: 1fr;
+    }
 }
 </style>
 
 <script>
+// Store search parameters for back navigation
+const searchParams = {
+    search: '<?php echo addslashes($search); ?>',
+    location: '<?php echo addslashes($location_filter); ?>',
+    max_price: '<?php echo $max_price; ?>',
+    size: '<?php echo addslashes($size_filter); ?>'
+};
+
 function openBuyLandModal(landId, title, price, size) {
     document.getElementById('modalLandId').value = landId;
     document.getElementById('modalLandTitle').textContent = title;
@@ -779,6 +901,50 @@ function openBuyLandModal(landId, title, price, size) {
 
 function closeBuyLandModal() {
     document.getElementById('buyLandModal').style.display = 'none';
+}
+
+function goBackToListings() {
+    const params = new URLSearchParams();
+    if (searchParams.search) params.set('search', searchParams.search);
+    if (searchParams.location) params.set('location', searchParams.location);
+    if (searchParams.max_price && searchParams.max_price > 0) params.set('max_price', searchParams.max_price);
+    if (searchParams.size) params.set('size', searchParams.size);
+    
+    const url = params.toString() ? '?' + params.toString() : '?';
+    window.location.href = url;
+}
+
+function changeMainImage(imageSrc) {
+    const mainImage = document.getElementById('mainImage');
+    if (mainImage) {
+        // Show loading state
+        mainImage.src = '/placeholder.svg?height=600&width=800';
+        
+        // Load the actual image
+        const img = new Image();
+        img.onload = function() {
+            mainImage.src = imageSrc;
+        };
+        img.onerror = function() {
+            mainImage.src = '/placeholder.svg?height=600&width=800';
+        };
+        img.src = imageSrc;
+    }
+}
+
+function shareProperty() {
+    if (navigator.share) {
+        navigator.share({
+            title: document.querySelector('.land-info h2').textContent,
+            text: 'Check out this land for sale',
+            url: window.location.href
+        });
+    } else {
+        // Fallback: copy to clipboard
+        navigator.clipboard.writeText(window.location.href).then(() => {
+            alert('Link copied to clipboard!');
+        });
+    }
 }
 
 // Phone number validation
@@ -794,17 +960,71 @@ window.onclick = function(event) {
     }
 }
 
-// Thumbnail click handler for detail view
+// Image loading optimization
 document.addEventListener('DOMContentLoaded', function() {
-    const thumbnails = document.querySelectorAll('.thumbnail');
-    if (thumbnails.length > 0) {
-        thumbnails.forEach(thumb => {
-            thumb.addEventListener('click', function() {
-                const mainImage = document.querySelector('.main-image img');
-                const thumbSrc = this.querySelector('img').src;
-                mainImage.src = thumbSrc;
+    // Lazy load images with IntersectionObserver
+    if ('IntersectionObserver' in window) {
+        const lazyImages = document.querySelectorAll('img[data-src]');
+        
+        const imageObserver = new IntersectionObserver((entries, observer) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const img = entry.target;
+                    const src = img.getAttribute('data-src');
+                    
+                    // Load the actual image
+                    const newImg = new Image();
+                    newImg.onload = function() {
+                        img.src = src;
+                        img.removeAttribute('data-src');
+                    };
+                    newImg.onerror = function() {
+                        img.src = '/placeholder.svg?height=' + img.height + '&width=' + img.width;
+                    };
+                    newImg.src = src;
+                    
+                    observer.unobserve(img);
+                }
             });
         });
+        
+        lazyImages.forEach(img => {
+            imageObserver.observe(img);
+        });
+    } else {
+        // Fallback for browsers without IntersectionObserver
+        const lazyImages = document.querySelectorAll('img[data-src]');
+        lazyImages.forEach(img => {
+            const src = img.getAttribute('data-src');
+            img.src = src;
+            img.onerror = function() {
+                this.src = '/placeholder.svg?height=' + this.height + '&width=' + this.width;
+            };
+        });
+    }
+    
+    // Preload main image on detail view
+    const mainImage = document.getElementById('mainImage');
+    if (mainImage && mainImage.hasAttribute('data-src')) {
+        const src = mainImage.getAttribute('data-src');
+        const img = new Image();
+        img.onload = function() {
+            mainImage.src = src;
+        };
+        img.onerror = function() {
+            mainImage.src = '/placeholder.svg?height=600&width=800';
+        };
+        img.src = src;
+    }
+});
+
+// Form validation
+document.getElementById('buyLandForm').addEventListener('submit', function(e) {
+    const phone = document.getElementById('customer_phone').value;
+    if (phone.length !== 10 || !/^\d+$/.test(phone)) {
+        e.preventDefault();
+        alert('Please enter a valid 10-digit phone number');
+        return false;
     }
 });
 </script>

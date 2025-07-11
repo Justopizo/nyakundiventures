@@ -50,7 +50,6 @@ if ($max_price > 0) {
 }
 
 $where_clause = 'WHERE ' . implode(' AND ', $where_conditions);
-
 $stmt = $pdo->prepare("SELECT * FROM rental_houses $where_clause ORDER BY created_at DESC");
 $stmt->execute($params);
 $rental_houses = $stmt->fetchAll();
@@ -58,6 +57,40 @@ $rental_houses = $stmt->fetchAll();
 // Get unique locations for filter
 $stmt = $pdo->query("SELECT DISTINCT location FROM rental_houses WHERE status = 'available' ORDER BY location");
 $locations = $stmt->fetchAll();
+
+// Function to get first image from JSON or comma-separated string
+function getFirstImage($images_data) {
+    if (empty($images_data)) {
+        return null;
+    }
+    
+    // Try to decode as JSON first (new format)
+    $decoded = json_decode($images_data, true);
+    if (json_last_error() === JSON_ERROR_NONE && is_array($decoded) && !empty($decoded)) {
+        return $decoded[0];
+    }
+    
+    // Fallback to comma-separated format (old format)
+    $images_array = explode(',', $images_data);
+    return !empty($images_array) ? trim($images_array[0]) : null;
+}
+
+// Function to get all images from JSON or comma-separated string
+function getAllImages($images_data) {
+    if (empty($images_data)) {
+        return [];
+    }
+    
+    // Try to decode as JSON first (new format)
+    $decoded = json_decode($images_data, true);
+    if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+        return $decoded;
+    }
+    
+    // Fallback to comma-separated format (old format)
+    $images_array = explode(',', $images_data);
+    return array_map('trim', array_filter($images_array));
+}
 ?>
 
 <h1 class="page-title"><i class="fas fa-home"></i> Houses for Rent</h1>
@@ -107,10 +140,21 @@ $locations = $stmt->fetchAll();
         <div class="properties-grid">
             <?php foreach ($rental_houses as $house): ?>
                 <div class="property-card">
-                    <?php if ($house['images']): ?>
-                        <?php $images = explode(',', $house['images']); ?>
+                    <?php 
+                    $first_image = getFirstImage($house['images']);
+                    if ($first_image): 
+                    ?>
                         <div class="property-image">
-                            <img src="<?php echo trim($images[0]); ?>" alt="<?php echo htmlspecialchars($house['title']); ?>" onerror="this.src='/placeholder.svg?height=200&width=300'">
+                            <img src="<?php echo htmlspecialchars($first_image); ?>" 
+                                 alt="<?php echo htmlspecialchars($house['title']); ?>" 
+                                 onerror="this.src='/placeholder.svg?height=200&width=300'"
+                                 loading="lazy">
+                        </div>
+                    <?php else: ?>
+                        <div class="property-image">
+                            <img src="/placeholder.svg?height=200&width=300" 
+                                 alt="No image available" 
+                                 loading="lazy">
                         </div>
                     <?php endif; ?>
                     
@@ -278,12 +322,17 @@ $locations = $stmt->fetchAll();
 .property-image {
     height: 200px;
     overflow: hidden;
+    background: #f8f9fa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .property-image img {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    transition: opacity 0.3s ease;
 }
 
 .property-content {
@@ -530,18 +579,31 @@ function viewDetails(houseId) {
                 let imagesHtml = '';
                 
                 if (house.images) {
-                    const imageList = house.images.split(',');
-                    imagesHtml = '<div class="property-gallery">';
-                    imageList.forEach(img => {
-                        imagesHtml += `<img src="${img.trim()}" alt="Property Image" style="max-width: 100%; margin-bottom: 10px;" onerror="this.src='/placeholder.svg?height=300&width=450'">`;
-                    });
-                    imagesHtml += '</div>';
+                    // Handle both JSON and comma-separated formats
+                    let imageList = [];
+                    try {
+                        // Try to parse as JSON first
+                        imageList = JSON.parse(house.images);
+                    } catch (e) {
+                        // Fallback to comma-separated
+                        imageList = house.images.split(',').map(img => img.trim());
+                    }
+                    
+                    if (imageList.length > 0) {
+                        imagesHtml = '<div class="property-gallery" style="margin-bottom: 20px;">';
+                        imageList.forEach(img => {
+                            if (img) {
+                                imagesHtml += `<img src="${img}" alt="Property Image" style="max-width: 100%; margin-bottom: 10px; border-radius: 8px;" onerror="this.src='/placeholder.svg?height=300&width=450'" loading="lazy">`;
+                            }
+                        });
+                        imagesHtml += '</div>';
+                    }
                 }
                 
                 document.getElementById('propertyDetails').innerHTML = `
                     <div style="padding: 20px;">
                         <h3>${house.title}</h3>
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
                             <p style="font-size: 1.2rem; color: #28a745; font-weight: bold;">
                                 <i class="fas fa-money-bill"></i> KSH ${parseInt(house.price).toLocaleString()}/month
                             </p>
@@ -554,7 +616,7 @@ function viewDetails(houseId) {
                         
                         <div style="margin-top: 20px;">
                             <h4>Description</h4>
-                            <p>${house.description || 'No description provided.'}</p>
+                            <p style="line-height: 1.6;">${house.description || 'No description provided.'}</p>
                         </div>
                         
                         <div style="margin-top: 30px; text-align: center;">
